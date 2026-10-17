@@ -10,9 +10,9 @@ import {input,analysis,answer,shape} from './schema.js';
 import {chat as validatedChat} from './chat.js';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const envPath=path.join(root,'server/.env');
-function key(){dotenv.config({path:envPath,override:true});return process.env.SARVAM_API_KEY?.trim();}
+function key(){dotenv.config({path:envPath,override:process.env.NODE_ENV!=='production'});return process.env.SARVAM_API_KEY?.trim();}
 const app=express();app.disable('x-powered-by');app.use(express.json({limit:'1mb'}));
-app.use('/api',(req,res,next)=>{const origin=req.headers.origin;if(origin&&!['http://localhost:5173','http://127.0.0.1:5173','http://localhost:3001','http://127.0.0.1:3001'].includes(origin))return res.status(403).json({error:'Origin not allowed'});next();});
+app.use('/api',(req,res,next)=>{const origin=req.headers.origin;const allowed=['http://localhost:5173','http://127.0.0.1:5173','http://localhost:3001','http://127.0.0.1:3001',process.env.RENDER_EXTERNAL_URL,process.env.APP_ORIGIN].filter(Boolean);if(origin&&!allowed.includes(origin))return res.status(403).json({error:'Origin not allowed'});next();});
 const route=fn=>(req,res,next)=>Promise.resolve(fn(req,res)).catch(next);
 async function sarvam(endpoint,data,headers={}){const token=key();if(!token){const e=new Error('Add SARVAM_API_KEY to E:\\sarvam\\server\\.env and save, then retry.');e.status=503;throw e;}return (await axios.post('https://api.sarvam.ai'+endpoint,data,{headers:{...headers,'api-subscription-key':token},timeout:120000,maxContentLength:20000000,maxBodyLength:15000000})).data;}
 const chat=(system,payload,schema)=>validatedChat(sarvam,system,payload,schema);
@@ -24,5 +24,5 @@ app.post('/api/transcribe',upload.single('audio'),route(async(req,res)=>{if(!req
 app.post('/api/speak',route(async(req,res)=>{const {text}=z.object({text:z.string().trim().min(1).max(2500)}).parse(req.body);const result=await sarvam('/text-to-speech',{text,model:'bulbul:v3',language_code:'en-IN',speaker:'shubh',output_audio_codec:'wav'});res.json(z.object({audios:z.array(z.string().min(1)).min(1)}).parse(result));}));
 app.use(express.static(path.join(root,'dist')));app.get('*',(req,res)=>res.sendFile(path.join(root,'dist/index.html')));
 app.use((err,req,res,next)=>{const status=err instanceof z.ZodError?400:err instanceof multer.MulterError?413:err.status|| (err.response?502:500);const message=err instanceof z.ZodError?'Invalid input or response structure. Check the SQL and try again.':err.response?`Sarvam API returned ${err.response.status}. Check your API key, model access, quota and request size.`:err.code==='ECONNABORTED'?'Sarvam timed out. Please retry.':err.message||'Request failed';res.status(status).json({error:message});});
-key();app.listen(process.env.PORT||3001,'127.0.0.1',()=>console.log('SQL Whisperer backend: http://localhost:3001'));
+key();const port=process.env.PORT||3001;const host=process.env.NODE_ENV==='production'?'0.0.0.0':'127.0.0.1';app.listen(port,host,()=>console.log(`SQL Whisperer listening on ${host}:${port}`));
 
